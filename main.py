@@ -14,7 +14,7 @@ PHONE_NUMBER = "+998-88-800-99-56"
 ADMIN_USERNAME = "@exodus_admn"
 
 ADMIN_IDS = [8554402317]
-CHANNEL_ID = "@ish_keremidi"  # E'lon boradigan kanal
+CHANNEL_ID = "@ish_keremidi"  # E'lon boradigan kanal username'si
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=API_TOKEN)
@@ -22,7 +22,7 @@ storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
 users_db = {}
-posts_db = {}  # E'lonlarni vaqtincha saqlash uchun
+posts_db = {}
 
 
 # --- FSM (HOLATLAR) ---
@@ -138,9 +138,9 @@ async def process_photo(message: types.Message, state: FSMContext):
         "status": "Faol",
     }
 
-    # Adminga yuborish
+    # Anketani adminga yuborish
     admin_text = (
-        f"👤 **Yangi foydalanuvchi ro'yxatdan o'tdi!**\n\n"
+        f"👤 **Yangi ishchi ro'yxatdan o'tdi!**\n\n"
         f"F.I.O: {data['full_name']}\n"
         f"Tel: {data['phone']}\n"
         f"Yosh: {data['age']}\n"
@@ -165,11 +165,11 @@ async def process_photo(message: types.Message, state: FSMContext):
     await state.clear()
 
 
-# --- 2. E'LON BERISH VA AVTO HISOB-KITOB ---
+# --- 2. E'LON BERISH VA AVTO HISOBLASH ---
 @dp.message(F.text == "📝 E'lon berish")
 async def start_job_post(message: types.Message, state: FSMContext):
     await message.answer(
-        "📋 E'lon matnini kiriting (Masalan: Ish vaqti, manzil, avtobuslar va qo'shimcha ma'lumotlar):",
+        "📋 E'lon matnini kiriting (Masalan: Ish vaqti, ovqat, manzil, avtobuslar va qo'shimcha ma'lumotlar):",
         reply_markup=types.ReplyKeyboardRemove()
     )
     await state.set_state(JobPost.waiting_text)
@@ -184,7 +184,7 @@ async def process_job_text(message: types.Message, state: FSMContext):
         builder.button(text=str(i))
     builder.adjust(3)
     
-    await message.answer("👥 Ishga nechta odam kerak? Pastdan tanlang yoki yozing:", reply_markup=builder.as_markup(resize_keyboard=True))
+    await message.answer("👥 Ishga nechta odam kerak? Pastdan tugmani bosing yoki yozing:", reply_markup=builder.as_markup(resize_keyboard=True))
     await state.set_state(JobPost.waiting_workers_count)
 
 
@@ -192,7 +192,7 @@ async def process_job_text(message: types.Message, state: FSMContext):
 async def process_workers_count(message: types.Message, state: FSMContext):
     await state.update_data(workers_count=message.text)
     await message.answer(
-        "💵 **Xizmat haqi** (ishchiga beriladigan kunlik ish haqi miqdorini raqamda kiriting, masalan: 170000):",
+        "💵 **Xizmat haqqi** (ishchiga beriladigan kunlik ish haqi miqdorini raqamda kiriting, masalan: 170000):",
         reply_markup=types.ReplyKeyboardRemove()
     )
     await state.set_state(JobPost.waiting_salary)
@@ -206,7 +206,7 @@ async def process_salary_and_publish(message: types.Message, state: FSMContext):
     
     salary = int(message.text)
     
-    # Avtomatik xizmat haqini belgilash (5000 dan 25000 gacha ish haqiga qarab)
+    # Avtomatik xizmat haqini belgilash (5000 dan 25000 gacha)
     if salary <= 100000:
         fee = 5000
     elif salary <= 200000:
@@ -220,12 +220,11 @@ async def process_salary_and_publish(message: types.Message, state: FSMContext):
 
     data = await state.get_data()
     post_id = len(posts_db) + 1
-    posts_db[post_id] = data
+    posts_db[post_id] = {**data, "salary": salary, "fee": fee}
 
-    # Kanal uchun e'lon ko'rinishi
+    # Siz so'ragan aniq ko'rinish
     channel_text = (
         f"💰 Ish haqi: {salary:,} so'm\n"
-        f"👥 Kerakli odam: {data['workers_count']} ta\n"
         f"📝 {data['job_text']}\n\n"
         f"🌟 Xizmat haqi: {fee:,} so'm\n"
         f"🟢 Holat: Faol\n"
@@ -241,7 +240,7 @@ async def process_salary_and_publish(message: types.Message, state: FSMContext):
         posts_db[post_id]["message_id"] = sent_msg.message_id
         await message.answer("✅ E'lon muvaffaqiyatli kanalga joylandi!")
     except Exception as e:
-        await message.answer(f"❌ Kanalga yozishda xatolik (Bot kanalga admin qilinganmi?): {e}")
+        await message.answer(f"❌ Kanalga joylashda xatolik (Bot kanalga admin qilinganligini tekshiring): {e}")
 
     builder_menu = ReplyKeyboardBuilder()
     builder_menu.button(text="📝 E'lon berish")
@@ -308,9 +307,9 @@ async def admin_approve(callback: types.CallbackQuery):
     
     success_text = (
         f"✅ **To'lovingiz tasdiqlandi!**\n\n"
-        f"📍 Manzil: Toshkent shahar, Chorsu\n"
-        f"📞 Ish beruvchi raqami: +998901234567\n"
-        f"🛠 Ish turi: Universal yengil ish"
+        f"📍 Manzil: Toshkent shahar\n"
+        f"📞 Ish beruvchi raqami: {PHONE_NUMBER}\n"
+        f"🛠 Ma'lumotlar ochildi."
     )
     await bot.send_message(chat_id=user_id, text=success_text)
     await callback.message.edit_caption(caption=callback.message.caption + "\n\n✅ **TASDIQLANDI**")
@@ -320,7 +319,7 @@ async def admin_approve(callback: types.CallbackQuery):
 @dp.callback_query(F.data.startswith("adm_reject_"))
 async def admin_reject(callback: types.CallbackQuery):
     user_id = int(callback.data.split("_")[2])
-    await bot.send_message(chat_id=user_id, text="❌ To'lovingiz rad etildi. Ma'lumotlar noto'g'ri.")
+    await bot.send_message(chat_id=user_id, text="❌ To'lovingiz rad etildi.")
     await callback.message.edit_caption(caption=callback.message.caption + "\n\n❌ **RAD ETILDI**")
     await callback.answer("Rad etildi!")
 
