@@ -13,9 +13,8 @@ CARD_OWNER = "Dilmurod Rajabov"
 PHONE_NUMBER = "+998-88-800-99-56"
 ADMIN_USERNAME = "@exodus_admn"
 
-# Sizning Admin ID raqamingiz
 ADMIN_IDS = [8554402317]
-CHANNEL_ID = "@ish_keremidi"  # E'lonlar boradigan kanal username yoki ID si
+CHANNEL_ID = "@ish_keremidi"  # E'lon boradigan kanal
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=API_TOKEN)
@@ -23,24 +22,31 @@ storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
 users_db = {}
+posts_db = {}  # E'lonlarni vaqtincha saqlash uchun
 
-# --- HOLATLAR (FSM) ---
+
+# --- FSM (HOLATLAR) ---
 class Registration(StatesGroup):
     full_name = State()
     phone = State()
     age = State()
     gender = State()
     region = State()
-    profession = State()
     photo = State()
+
 
 class JobPost(StatesGroup):
     waiting_text = State()
+    waiting_workers_count = State()
     waiting_salary = State()
-    waiting_screenshot = State()
 
 
-# --- 1. START VA RO'YXATDAN O'TISH ---
+class WorkerApply(StatesGroup):
+    waiting_location_screenshot = State()
+    waiting_payment_check = State()
+
+
+# --- 1. RO'YXATDAN O'TISH ---
 @dp.message(F.text == "/start")
 async def cmd_start(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
@@ -48,18 +54,16 @@ async def cmd_start(message: types.Message, state: FSMContext):
         builder = ReplyKeyboardBuilder()
         builder.button(text="📝 E'lon berish")
         builder.button(text="👤 Mening ma'lumotlarim")
-        builder.button(text="💰 Balans")
-        builder.adjust(1, 2)
+        builder.adjust(1)
         await message.answer(
-            "Siz allaqachon ro'yxatdan o'tgansiz! Quyidagi tugmalar orqali xizmatlardan foydalanishingiz mumkin:",
+            "Siz allaqachon ro'yxatdan o'tgansiz!",
             reply_markup=builder.as_markup(resize_keyboard=True),
         )
         return
 
     await message.answer(
-        "Assalomu alaykum! Ishchilar kanali rasmiy botiga xush kelibsiz.\n"
-        "Ro'yxatdan o'tish uchun Ism va familiyangizni kiriting:\n"
-        "Misol: Abdullayev Sardor"
+        "Assalomu alaykum! Ro'yxatdan o'tish uchun Ism va familiyangizni kiriting:\n"
+        "Misol: Dilmurod Rajabov"
     )
     await state.set_state(Registration.full_name)
 
@@ -95,8 +99,8 @@ async def process_age(message: types.Message, state: FSMContext):
     await state.update_data(age=message.text)
 
     builder = InlineKeyboardBuilder()
-    builder.button(text="👨 Erkak", callback_data="gender_male")
-    builder.button(text="👩 Ayol", callback_data="gender_female")
+    builder.button(text="👨 Erkak", callback_data="gender_Erkak")
+    builder.button(text="👩 Ayol", callback_data="gender_Ayol")
     builder.adjust(2)
 
     await message.answer("Jinsingizni tanlang:", reply_markup=builder.as_markup())
@@ -105,7 +109,7 @@ async def process_age(message: types.Message, state: FSMContext):
 
 @dp.callback_query(F.data.startswith("gender_"))
 async def process_gender(callback: types.CallbackQuery, state: FSMContext):
-    gender = "Erkak" if callback.data == "gender_male" else "Ayol"
+    gender = callback.data.split("_")[1]
     await state.update_data(gender=gender)
     await callback.message.edit_text("Qayerdansiz? (Viloyat, tuman yoki shahar):")
     await state.set_state(Registration.region)
@@ -115,15 +119,6 @@ async def process_gender(callback: types.CallbackQuery, state: FSMContext):
 @dp.message(Registration.region)
 async def process_region(message: types.Message, state: FSMContext):
     await state.update_data(region=message.text)
-    await message.answer(
-        "🛠 Qanday turdagi ishlarni bajarasiz? (Masalan: Malyar, Gipsokarton, Universal uborik va h.k.):"
-    )
-    await state.set_state(Registration.profession)
-
-
-@dp.message(Registration.profession)
-async def process_profession(message: types.Message, state: FSMContext):
-    await state.update_data(profession=message.text)
     await message.answer("📷 O'zingizning 1 ta shaxsiy rasmingizni yuboring (majburiy):")
     await state.set_state(Registration.photo)
 
@@ -139,16 +134,29 @@ async def process_photo(message: types.Message, state: FSMContext):
         "age": data["age"],
         "gender": data["gender"],
         "region": data["region"],
-        "profession": data["profession"],
         "photo": photo_id,
         "status": "Faol",
     }
 
+    # Adminga yuborish
+    admin_text = (
+        f"👤 **Yangi foydalanuvchi ro'yxatdan o'tdi!**\n\n"
+        f"F.I.O: {data['full_name']}\n"
+        f"Tel: {data['phone']}\n"
+        f"Yosh: {data['age']}\n"
+        f"Jins: {data['gender']}\n"
+        f"Hudud: {data['region']}"
+    )
+    for admin_id in ADMIN_IDS:
+        try:
+            await bot.send_photo(chat_id=admin_id, photo=photo_id, caption=admin_text, parse_mode="Markdown")
+        except Exception:
+            pass
+
     builder = ReplyKeyboardBuilder()
     builder.button(text="📝 E'lon berish")
     builder.button(text="👤 Mening ma'lumotlarim")
-    builder.button(text="💰 Balans")
-    builder.adjust(1, 2)
+    builder.adjust(1)
 
     await message.answer(
         "✅ Tabriklaymiz, ro'yxatdan muvaffaqiyatli o'tdingiz!",
@@ -157,11 +165,11 @@ async def process_photo(message: types.Message, state: FSMContext):
     await state.clear()
 
 
-# --- 2. E'LON BERISH JARAYONI ---
+# --- 2. E'LON BERISH VA AVTO HISOB-KITOB ---
 @dp.message(F.text == "📝 E'lon berish")
 async def start_job_post(message: types.Message, state: FSMContext):
     await message.answer(
-        "📋 Kerakli ish bo'yicha ma'lumotlarni kiriting (masalan: Ish turi, qancha odam kerakligi, vaqt va manzil):",
+        "📋 E'lon matnini kiriting (Masalan: Ish vaqti, manzil, avtobuslar va qo'shimcha ma'lumotlar):",
         reply_markup=types.ReplyKeyboardRemove()
     )
     await state.set_state(JobPost.waiting_text)
@@ -170,69 +178,154 @@ async def start_job_post(message: types.Message, state: FSMContext):
 @dp.message(JobPost.waiting_text)
 async def process_job_text(message: types.Message, state: FSMContext):
     await state.update_data(job_text=message.text)
+    
+    builder = ReplyKeyboardBuilder()
+    for i in range(1, 6):
+        builder.button(text=str(i))
+    builder.adjust(3)
+    
+    await message.answer("👥 Ishga nechta odam kerak? Pastdan tanlang yoki yozing:", reply_markup=builder.as_markup(resize_keyboard=True))
+    await state.set_state(JobPost.waiting_workers_count)
+
+
+@dp.message(JobPost.waiting_workers_count)
+async def process_workers_count(message: types.Message, state: FSMContext):
+    await state.update_data(workers_count=message.text)
     await message.answer(
-        "💵 **Xizmat haqqi** (ishchiga beriladigan kunlik ish haqi miqdorini) kiriting:\n"
-        "Masalan: 150 000 so'm"
+        "💵 **Xizmat haqi** (ishchiga beriladigan kunlik ish haqi miqdorini raqamda kiriting, masalan: 170000):",
+        reply_markup=types.ReplyKeyboardRemove()
     )
     await state.set_state(JobPost.waiting_salary)
 
 
 @dp.message(JobPost.waiting_salary)
-async def process_job_salary(message: types.Message, state: FSMContext):
-    await state.update_data(salary=message.text)
+async def process_salary_and_publish(message: types.Message, state: FSMContext):
+    if not message.text.isdigit():
+        await message.answer("Iltimos, faqat raqam kiriting (masalan: 170000):")
+        return
     
-    payment_text = (
-        f"💳 **To'lov qilish uchun karta:**\n"
-        f"`{CARD_NUMBER}`\n"
-        f"Egasi: {CARD_OWNER}\n\n"
-        f"Iltimos, e'lon joylash to'lovini amalga oshiring va chek (skrinshot) rasmini yuboring:"
-    )
-    await message.answer(payment_text, parse_mode="Markdown")
-    await state.set_state(JobPost.waiting_screenshot)
+    salary = int(message.text)
+    
+    # Avtomatik xizmat haqini belgilash (5000 dan 25000 gacha ish haqiga qarab)
+    if salary <= 100000:
+        fee = 5000
+    elif salary <= 200000:
+        fee = 10000
+    elif salary <= 300000:
+        fee = 15000
+    elif salary <= 400000:
+        fee = 20000
+    else:
+        fee = 25000
 
-
-@dp.message(JobPost.waiting_screenshot, F.photo)
-async def process_job_screenshot(message: types.Message, state: FSMContext):
-    screenshot_id = message.photo[-1].file_id
     data = await state.get_data()
-    
-    user = users_db.get(message.from_user.id, {})
-    phone = user.get("phone", "Ko'rsatilmagan")
+    post_id = len(posts_db) + 1
+    posts_db[post_id] = data
 
-    # Adminlarga tasdiqlash uchun yuborish
-    builder = InlineKeyboardBuilder()
-    builder.button(text="✅ Tasdiqlash", callback_data=f"approve_{message.from_user.id}")
-    builder.button(text="❌ Rad etish", callback_data=f"reject_{message.from_user.id}")
-    builder.adjust(2)
-
-    admin_text = (
-        f"🔔 **Yangi e'lon keldi!**\n\n"
-        f"👤 Yuboruvchi: {message.from_user.full_name} (@{message.from_user.username})\n"
-        f"📞 Tel: {phone}\n\n"
-        f"📝 Matn: {data['job_text']}\n"
-        f"💰 Xizmat haqqi: {data['salary']}"
+    # Kanal uchun e'lon ko'rinishi
+    channel_text = (
+        f"💰 Ish haqi: {salary:,} so'm\n"
+        f"👥 Kerakli odam: {data['workers_count']} ta\n"
+        f"📝 {data['job_text']}\n\n"
+        f"🌟 Xizmat haqi: {fee:,} so'm\n"
+        f"🟢 Holat: Faol\n"
+        f"📅 Bugun\n"
+        f"№ {post_id}"
     )
 
-    for admin_id in ADMIN_IDS:
-        try:
-            await bot.send_photo(chat_id=admin_id, photo=screenshot_id, caption=admin_text, reply_markup=builder.as_markup(), parse_mode="Markdown")
-        except Exception as e:
-            logging.error(f"Admin uchun xatolik: {e}")
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✍️ Ishga yozilish", callback_data=f"apply_{post_id}")
+
+    try:
+        sent_msg = await bot.send_message(chat_id=CHANNEL_ID, text=channel_text, reply_markup=builder.as_markup())
+        posts_db[post_id]["message_id"] = sent_msg.message_id
+        await message.answer("✅ E'lon muvaffaqiyatli kanalga joylandi!")
+    except Exception as e:
+        await message.answer(f"❌ Kanalga yozishda xatolik (Bot kanalga admin qilinganmi?): {e}")
 
     builder_menu = ReplyKeyboardBuilder()
     builder_menu.button(text="📝 E'lon berish")
     builder_menu.button(text="👤 Mening ma'lumotlarim")
-    builder_menu.button(text="💰 Balans")
-    builder_menu.adjust(1, 2)
-
-    await message.answer(
-        "✅ E'loningiz muvaffaqiyatli yuborildi! Tekshiruvdan so'ng kanalga chiqariladi.",
-        reply_markup=builder_menu.as_markup(resize_keyboard=True)
-    )
+    builder_menu.adjust(1)
+    await message.answer("Asosiy menyu:", reply_markup=builder_menu.as_markup(resize_keyboard=True))
     await state.clear()
 
 
-# --- 3. PROFIL VA BALANS ---
+# --- 3. ISHGA YOZILISH VA LOKATSIYA ---
+@dp.callback_query(F.data.startswith("apply_"))
+async def apply_to_job(callback: types.CallbackQuery, state: FSMContext):
+    post_id = int(callback.data.split("_")[1])
+    await state.update_data(post_id=post_id)
+    
+    await callback.message.answer(
+        "📍 Ish joyiga qanchalik yaqinligingizni bilishimiz uchun **hozirgi lokatsiyangizdan skrinshot (screenshot)** olib shu yerga yuboring:"
+    )
+    await state.set_state(WorkerApply.waiting_location_screenshot)
+    await callback.answer()
+
+
+@dp.message(WorkerApply.waiting_location_screenshot, F.photo)
+async def receive_location_screenshot(message: types.Message, state: FSMContext):
+    payment_text = (
+        f"💳 **To'lov qilish uchun karta:**\n"
+        f"`{CARD_NUMBER}`\n"
+        f"Karta egasi: {CARD_OWNER}\n"
+        f"📞 Operator: {PHONE_NUMBER}\n\n"
+        f"⏱ **To'lov qilish uchun vaqt: 3 daqiqa!**\n"
+        f"Iltimos, to'lovni amalga oshirib chekni yuboring:"
+    )
+    await message.answer(payment_text, parse_mode="Markdown")
+    await state.set_state(WorkerApply.waiting_payment_check)
+
+
+@dp.message(WorkerApply.waiting_payment_check, F.photo)
+async def receive_payment_check(message: types.Message, state: FSMContext):
+    check_photo = message.photo[-1].file_id
+    user = message.from_user
+
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✅ Tasdiqlash", callback_data=f"adm_approve_{user.id}")
+    builder.button(text="❌ Rad etish", callback_data=f"adm_reject_{user.id}")
+    builder.adjust(2)
+
+    admin_msg = (
+        f"🔔 **Yangi to'lov cheki keldi!**\n\n"
+        f"👤 Foydalanuvchi: {user.full_name} (@{user.username})\n"
+        f"🆔 ID: {user.id}"
+    )
+
+    for admin_id in ADMIN_IDS:
+        await bot.send_photo(chat_id=admin_id, photo=check_photo, caption=admin_msg, reply_markup=builder.as_markup())
+
+    await message.answer("⏳ To'lov chekingiz adminga yuborildi. Tez orada tasdiqlanadi!")
+    await state.clear()
+
+
+# Admin tasdiqlashi
+@dp.callback_query(F.data.startswith("adm_approve_"))
+async def admin_approve(callback: types.CallbackQuery):
+    user_id = int(callback.data.split("_")[2])
+    
+    success_text = (
+        f"✅ **To'lovingiz tasdiqlandi!**\n\n"
+        f"📍 Manzil: Toshkent shahar, Chorsu\n"
+        f"📞 Ish beruvchi raqami: +998901234567\n"
+        f"🛠 Ish turi: Universal yengil ish"
+    )
+    await bot.send_message(chat_id=user_id, text=success_text)
+    await callback.message.edit_caption(caption=callback.message.caption + "\n\n✅ **TASDIQLANDI**")
+    await callback.answer("Muvaffaqiyatli tasdiqlandi!")
+
+
+@dp.callback_query(F.data.startswith("adm_reject_"))
+async def admin_reject(callback: types.CallbackQuery):
+    user_id = int(callback.data.split("_")[2])
+    await bot.send_message(chat_id=user_id, text="❌ To'lovingiz rad etildi. Ma'lumotlar noto'g'ri.")
+    await callback.message.edit_caption(caption=callback.message.caption + "\n\n❌ **RAD ETILDI**")
+    await callback.answer("Rad etildi!")
+
+
+# --- PROFIL ---
 @dp.message(F.text == "👤 Mening ma'lumotlarim")
 async def show_profile(message: types.Message):
     user = users_db.get(message.from_user.id)
@@ -247,22 +340,11 @@ async def show_profile(message: types.Message):
         f"Yosh: {user['age']}\n"
         f"Jins: {user['gender']}\n"
         f"Hudud: {user['region']}\n"
-        f"Mutaxassislik: {user['profession']}\n"
         f"Holat: {user['status']}"
     )
     await message.answer(text, parse_mode="Markdown")
 
 
-@dp.message(F.text == "💰 Balans")
-async def show_balance(message: types.Message):
-    user = users_db.get(message.from_user.id)
-    if not user:
-        await message.answer("Siz ro'yxatdan o'tmagansiz. /start ni bosing.")
-        return
-    await message.answer("💰 Sizning balansingiz: 0 so'm")
-
-
-# --- ASOSIY MAIN ---
 async def main():
     await dp.start_polling(bot)
 
