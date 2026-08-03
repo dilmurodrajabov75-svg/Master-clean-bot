@@ -1,5 +1,6 @@
 import logging
 import asyncio
+import re
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -14,7 +15,7 @@ PHONE_NUMBER = "+998-88-800-99-56"
 ADMIN_USERNAME = "@exodus_admn"
 
 ADMIN_IDS = [8554402317]
-CHANNEL_ID = "@ish_keremidi"  # E'lon boradigan kanal username'si
+CHANNEL_ID = "@ish_keremidi"
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=API_TOKEN)
@@ -40,7 +41,7 @@ class JobPost(StatesGroup):
 
 
 class WorkerApply(StatesGroup):
-    waiting_location_screenshot = State()
+    waiting_location_text = State()
     waiting_payment_check = State()
 
 
@@ -72,13 +73,13 @@ async def process_full_name(message: types.Message, state: FSMContext):
     builder = ReplyKeyboardBuilder()
     builder.button(text="📱 Telefon raqamni yuborish", request_contact=True)
     await message.answer(
-        "Pastdagi tugma orqali telefon raqamingizni yuboring:",
+        "Pastdagi tugma orqali telefon raqamingizni yuboring yoki qo'lda yozib yuboring:",
         reply_markup=builder.as_markup(resize_keyboard=True),
     )
     await state.set_state(Registration.phone)
 
 
-@dp.message(Registration.phone, F.contact | F.text)
+@dp.message(Registration.phone)
 async def process_phone(message: types.Message, state: FSMContext):
     phone = message.contact.phone_number if message.contact else message.text
     await state.update_data(phone=phone)
@@ -136,6 +137,7 @@ async def process_photo(message: types.Message, state: FSMContext):
         "status": "Faol",
     }
 
+    # Boshqalarning anketasi sizga (adminga) kelishi
     admin_text = (
         f"👤 **Yangi ishchi ro'yxatdan o'tdi!**\n\n"
         f"F.I.O: {data['full_name']}\n"
@@ -162,19 +164,22 @@ async def process_photo(message: types.Message, state: FSMContext):
     await state.clear()
 
 
-# --- 2. E'LON BERISH (BARDCHASI BIR KONTENTDA) ---
+# --- 2. E'LON BERISH VA KANALGA AVTO JOYLASH ---
 @dp.message(F.text == "📝 E'lon berish")
 async def start_job_post(message: types.Message, state: FSMContext):
+    if message.from_user.id not in ADMIN_IDS:
+        await message.answer("Kechirasiz, e'lon berish faqat adminlar uchun ruxsat etilgan.")
+        return
+
     example_text = (
-        "📋 Quyidagi namunadagidek ma'lumotlarni yuboring:\n\n"
+        "📋 E'lon matnini quyidagi tartibda yuboring:\n\n"
         "💰 Ish haqi: 170 000\n"
         "🍛 Ovqat: 1 mahal\n"
         "⏰ Vaqt: 13:00-19:00\n"
         "📱 Manzil: Chorsu\n"
         "🚌 Avtobuslar: Chorsu metrosi\n"
         "📝 Qo'shimcha: Yengil ish\n"
-        "👥 Kerakli odam: 2 ta\n\n"
-        "*(Faqat yuqoridagilarni o'zingizga moslab yuboring, xizmat haqi va raqamni bot o'zi avtomatik qo'shadi)*"
+        "👥 Kerakli odam: 2 ta"
     )
     await message.answer(example_text, reply_markup=types.ReplyKeyboardRemove())
     await state.set_state(JobPost.waiting_all_info)
@@ -183,17 +188,12 @@ async def start_job_post(message: types.Message, state: FSMContext):
 @dp.message(JobPost.waiting_all_info)
 async def process_job_all_info(message: types.Message, state: FSMContext):
     user_text = message.text
-    
-    # Matn ichidan raqamlarni topish orqali ish haqini aniqlaymiz (masalan: 170000 yoki 170 000)
-    import re
     numbers = re.findall(r'\d+', user_text.replace(" ", ""))
-    
-    # Agar matnda ish haqi topilsa shundan hisoblaymiz, topilmasa standart 150000 olamiz
     salary = int(numbers[0]) if numbers else 170000
-    if salary < 1000: # Agar qisqa raqam kiritilgan bo'lsa
+    if salary < 1000:
         salary *= 1000
 
-    # Avtomatik xizmat haqini belgilash (5000 dan 25000 gacha)
+    # Avtomatik xizmat haqini hisoblash
     if salary <= 100000:
         fee = 5000
     elif salary <= 200000:
@@ -208,7 +208,6 @@ async def process_job_all_info(message: types.Message, state: FSMContext):
     post_id = len(posts_db) + 1
     posts_db[post_id] = {"text": user_text, "salary": salary, "fee": fee}
 
-    # Siz talab qilgan aniq ko'rinish
     channel_text = (
         f"{user_text}\n\n"
         f"🌟 Xizmat haqi: {fee:,} so'm\n"
@@ -223,9 +222,9 @@ async def process_job_all_info(message: types.Message, state: FSMContext):
     try:
         sent_msg = await bot.send_message(chat_id=CHANNEL_ID, text=channel_text, reply_markup=builder.as_markup())
         posts_db[post_id]["message_id"] = sent_msg.message_id
-        await message.answer("✅ E'loningiz muvaffaqiyatli va to'liq ko'rinishda kanalga joylandi!")
+        await message.answer("✅ E'loningiz avtomatik ravishda kanalga joylandi!")
     except Exception as e:
-        await message.answer(f"❌ Kanalga yozishda xatolik (Bot kanalga admin qilinganligini tekshiring): {e}")
+        await message.answer(f"❌ Xatolik: Bot kanalga admin qilinganligini tekshiring. Tafsilot: {e}")
 
     builder_menu = ReplyKeyboardBuilder()
     builder_menu.button(text="📝 E'lon berish")
@@ -235,28 +234,32 @@ async def process_job_all_info(message: types.Message, state: FSMContext):
     await state.clear()
 
 
-# --- 3. ISHGA YOZILISH VA LOKATSIYA ---
+# --- 3. ISHGA YOZILISH, MANZIL VA TO'LOV ---
 @dp.callback_query(F.data.startswith("apply_"))
 async def apply_to_job(callback: types.CallbackQuery, state: FSMContext):
     post_id = int(callback.data.split("_")[1])
     await state.update_data(post_id=post_id)
     
     await callback.message.answer(
-        "📍 Ish joyiga qanchalik yaqinligingizni bilishimiz uchun **hozirgi lokatsiyangizdan skrinshot (screenshot)** olib shu yerga yuboring:"
+        "📍 Ish joyiga qanchalik yaqinligingizni matn ko'rinishida yozib yuboring "
+        "(masalan: *Chorsudan 2 km uzoqlikdaman* yoki *Universitet ko'chasidaman*):",
+        parse_mode="Markdown"
     )
-    await state.set_state(WorkerApply.waiting_location_screenshot)
+    await state.set_state(WorkerApply.waiting_location_text)
     await callback.answer()
 
 
-@dp.message(WorkerApply.waiting_location_screenshot, F.photo)
-async def receive_location_screenshot(message: types.Message, state: FSMContext):
+@dp.message(WorkerApply.waiting_location_text)
+async def receive_location_text(message: types.Message, state: FSMContext):
+    await state.update_data(location_info=message.text)
+    
     payment_text = (
         f"💳 **To'lov qilish uchun karta:**\n"
         f"`{CARD_NUMBER}`\n"
         f"Karta egasi: {CARD_OWNER}\n"
         f"📞 Operator: {PHONE_NUMBER}\n\n"
         f"⏱ **To'lov qilish uchun vaqt: 3 daqiqa!**\n"
-        f"Iltimos, to'lovni amalga oshirib chekni yuboring:"
+        f"Iltimos, to'lovni amalga oshirib chek (skrinshot) rasmini yuboring:"
     )
     await message.answer(payment_text, parse_mode="Markdown")
     await state.set_state(WorkerApply.waiting_payment_check)
@@ -266,7 +269,10 @@ async def receive_location_screenshot(message: types.Message, state: FSMContext)
 async def receive_payment_check(message: types.Message, state: FSMContext):
     check_photo = message.photo[-1].file_id
     user = message.from_user
+    data = await state.get_data()
+    location_info = data.get("location_info", k="Noma'lum")
 
+    # Adminga tasdiqlash yoki rad etish tugmalari bilan yuborish
     builder = InlineKeyboardBuilder()
     builder.button(text="✅ Tasdiqlash", callback_data=f"adm_approve_{user.id}")
     builder.button(text="❌ Rad etish", callback_data=f"adm_reject_{user.id}")
@@ -274,28 +280,35 @@ async def receive_payment_check(message: types.Message, state: FSMContext):
 
     admin_msg = (
         f"🔔 **Yangi to'lov cheki keldi!**\n\n"
-        f"👤 Foydalanuvchi: {user.full_name} (@{user.username})\n"
-        f"🆔 ID: {user.id}"
+        f"👤 Ishchi: {user.full_name} (@{user.username})\n"
+        f"🆔 ID: {user.id}\n"
+        f"📍 Manzil ma'lumoti: {location_info}"
     )
 
     for admin_id in ADMIN_IDS:
-        await bot.send_photo(chat_id=admin_id, photo=check_photo, caption=admin_msg, reply_markup=builder.as_markup())
+        try:
+            await bot.send_photo(chat_id=admin_id, photo=check_photo, caption=admin_msg, reply_markup=builder.as_markup())
+        except Exception:
+            pass
 
     await message.answer("⏳ To'lov chekingiz adminga yuborildi. Tez orada tasdiqlanadi!")
     await state.clear()
 
 
-# Admin tasdiqlashi
+# Admin tasdiqlashi yoki rad etishi
 @dp.callback_query(F.data.startswith("adm_approve_"))
 async def admin_approve(callback: types.CallbackQuery):
     user_id = int(callback.data.split("_")[2])
-    
     success_text = (
         f"✅ **To'lovingiz tasdiqlandi!**\n\n"
-        f"📍 Manzil va ma'lumotlar ochildi:\n"
+        f"📍 Ish joyi manzili va ma'lumotlar ochildi:\n"
         f"📞 Ish beruvchi raqami: {PHONE_NUMBER}"
     )
-    await bot.send_message(chat_id=user_id, text=success_text)
+    try:
+        await bot.send_message(chat_id=user_id, text=success_text)
+    except Exception:
+        pass
+
     await callback.message.edit_caption(caption=callback.message.caption + "\n\n✅ **TASDIQLANDI**")
     await callback.answer("Muvaffaqiyatli tasdiqlandi!")
 
@@ -303,7 +316,11 @@ async def admin_approve(callback: types.CallbackQuery):
 @dp.callback_query(F.data.startswith("adm_reject_"))
 async def admin_reject(callback: types.CallbackQuery):
     user_id = int(callback.data.split("_")[2])
-    await bot.send_message(chat_id=user_id, text="❌ To'lovingiz rad etildi.")
+    try:
+        await bot.send_message(chat_id=user_id, text="❌ To'lovingiz rad etildi. Ma'lumotlarni qaytadan tekshiring.")
+    except Exception:
+        pass
+
     await callback.message.edit_caption(caption=callback.message.caption + "\n\n❌ **RAD ETILDI**")
     await callback.answer("Rad etildi!")
 
