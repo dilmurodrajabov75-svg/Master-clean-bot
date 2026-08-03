@@ -16,7 +16,6 @@ ADMIN_USERNAME = "@exodus_admn"
 
 # Admin ID raqamlari
 ADMIN_IDS = [8554402317]
-
 # Loggingni sozlash
 logging.basicConfig(level=logging.INFO)
 
